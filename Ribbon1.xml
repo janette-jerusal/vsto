@@ -1,0 +1,19 @@
+‹?xml version="1.0" encoding="UTF-8"?> <customUl xmIns="http://
+schemas.microsoft.com/office/
+2009/07/customui" onLoad="Ribbon_Load">
+<ribbon >
+<tabs>
+<tab id="tabTest"
+label="MyTab">
+<group
+id="MyGroup"
+label="My
+Group">
+<button
+id="btnCompare"
+label="Compare"
+onAction="btnCompare_click"/>
+</group>
+</tab>
+</tabs>
+</ribbon>
