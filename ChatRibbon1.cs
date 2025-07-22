@@ -1,146 +1,132 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using Microsoft.Office.Tools.Ribbon;
-using Microsoft.Office.Interop.Excel;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
-using ExcelApp = Microsoft.Office.Interop.Excel.Application;
+using Microsoft.Office.Tools.Ribbon;
+using Excel = Microsoft.Office.Interop.Excel;
+using Office = Microsoft.Office.Core;
 
 namespace Test2
 {
-    [ComVisible(true)]
-    public class Ribbon1 : IRibbonExtensibility
+    public partial class Ribbon1
     {
-        private IRibbonUI ribbon;
-
-        public string GetCustomUI(string ribbonID)
+        private void Ribbon1_Load(object sender, RibbonUIEventArgs e)
         {
-            var resourceName = "Test2.Ribbon1.xml";
-            using (Stream stream = GetType().Assembly.GetManifestResourceStream(resourceName))
-            using (StreamReader reader = new StreamReader(stream))
+        }
+
+        public void OnCompareBtnClick(Office.IRibbonControl control)
+        {
+            OpenFileDialog dialog = new OpenFileDialog
             {
-                return reader.ReadToEnd();
+                Multiselect = true,
+                Filter = "Excel Files|*.xlsx;*.xls"
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK && dialog.FileNames.Length == 2)
+            {
+                var file1 = dialog.FileNames[0];
+                var file2 = dialog.FileNames[1];
+
+                var stories1 = ReadStoriesFromExcel(file1);
+                var stories2 = ReadStoriesFromExcel(file2);
+
+                var results = CompareDescriptions(stories1, stories2);
+
+                OutputResults(results);
             }
         }
 
-        public void Ribbon_Load(IRibbonUI ribbonUI) => ribbon = ribbonUI;
-
-        public void OnCompare(IRibbonControl control)
+        private Dictionary<string, string> ReadStoriesFromExcel(string path)
         {
-            // Open file dialogs for both Excel files
-            OpenFileDialog dialog1 = new OpenFileDialog();
-            dialog1.Filter = "Excel Files|*.xlsx";
-            dialog1.Title = "Select First Excel File";
+            var stories = new Dictionary<string, string>();
 
-            OpenFileDialog dialog2 = new OpenFileDialog();
-            dialog2.Filter = "Excel Files|*.xlsx";
-            dialog2.Title = "Select Second Excel File";
+            var app = new Excel.Application();
+            var workbook = app.Workbooks.Open(path);
+            var sheet = workbook.Sheets[1] as Excel.Worksheet;
+            var range = sheet.UsedRange;
 
-            if (dialog1.ShowDialog() != DialogResult.OK || dialog2.ShowDialog() != DialogResult.OK)
-                return;
-
-            var wb1 = Globals.ThisWorkbook.Application.Workbooks.Open(dialog1.FileName);
-            var wb2 = Globals.ThisWorkbook.Application.Workbooks.Open(dialog2.FileName);
-
-            var ws1 = wb1.Sheets[1] as Worksheet;
-            var ws2 = wb2.Sheets[1] as Worksheet;
-
-            var data1 = ReadData(ws1);
-            var data2 = ReadData(ws2);
-
-            var results = CompareStories(data1, data2, 0.7); // 70% similarity threshold
-
-            var outputWS = Globals.ThisWorkbook.Sheets.Add() as Worksheet;
-            outputWS.Name = "Comparison Results";
-            outputWS.Cells[1, 1].Value = "ID 1";
-            outputWS.Cells[1, 2].Value = "ID 2";
-            outputWS.Cells[1, 3].Value = "Similarity";
-
-            int row = 2;
-            foreach (var res in results)
+            for (int i = 2; i <= range.Rows.Count; i++)
             {
-                outputWS.Cells[row, 1].Value = res.Item1;
-                outputWS.Cells[row, 2].Value = res.Item2;
-                outputWS.Cells[row, 3].Value = res.Item3;
-                row++;
+                string id = Convert.ToString((range.Cells[i, 1] as Excel.Range)?.Value2);
+                string desc = Convert.ToString((range.Cells[i, 2] as Excel.Range)?.Value2);
+                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(desc))
+                    stories[id] = desc;
             }
 
-            wb1.Close(false);
-            wb2.Close(false);
-        }
-
-        private Dictionary<string, string> ReadData(Worksheet ws)
-        {
-            Dictionary<string, string> stories = new Dictionary<string, string>();
-            int row = 2;
-
-            while (true)
-            {
-                var id = ws.Cells[row, 1].Value?.ToString();
-                var desc = ws.Cells[row, 2].Value?.ToString();
-
-                if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(desc))
-                    break;
-
-                stories[id] = desc;
-                row++;
-            }
+            workbook.Close(false);
+            app.Quit();
 
             return stories;
         }
 
-        private List<Tuple<string, string, double>> CompareStories(Dictionary<string, string> a, Dictionary<string, string> b, double threshold)
+        private List<(string ID1, string ID2, double Score)> CompareDescriptions(Dictionary<string, string> stories1, Dictionary<string, string> stories2)
         {
-            var results = new List<Tuple<string, string, double>>();
+            var allDocs = stories1.Values.Concat(stories2.Values).ToList();
+            var tfidfVectors = allDocs.Select(doc => GetTfIdfVector(doc, allDocs)).ToList();
 
-            foreach (var pairA in a)
+            int split = stories1.Count;
+            var results = new List<(string, string, double)>();
+
+            int i = 0;
+            foreach (var kvp1 in stories1)
             {
-                foreach (var pairB in b)
+                int j = split;
+                foreach (var kvp2 in stories2)
                 {
-                    double sim = CosineSimilarity(pairA.Value, pairB.Value);
-                    if (sim >= threshold)
-                        results.Add(Tuple.Create(pairA.Key, pairB.Key, sim));
+                    double sim = CosineSimilarity(tfidfVectors[i], tfidfVectors[j]);
+                    results.Add((kvp1.Key, kvp2.Key, sim));
+                    j++;
                 }
+                i++;
             }
 
-            return results;
+            return results.OrderByDescending(r => r.Score).ToList();
         }
 
-        private double CosineSimilarity(string s1, string s2)
+        private Dictionary<string, double> GetTfIdfVector(string doc, List<string> allDocs)
         {
-            var vec1 = GetVector(s1);
-            var vec2 = GetVector(s2);
+            var words = Tokenize(doc);
+            var tf = words.GroupBy(w => w).ToDictionary(g => g.Key, g => (double)g.Count() / words.Count);
+            var idf = words.Distinct().ToDictionary(
+                w => w,
+                w => Math.Log((double)allDocs.Count / allDocs.Count(d => Tokenize(d).Contains(w)))
+            );
+            return tf.ToDictionary(kv => kv.Key, kv => kv.Value * idf[kv.Key]);
+        }
 
+        private List<string> Tokenize(string text)
+        {
+            return Regex.Split(text.ToLower(), @"\W+").Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+        }
+
+        private double CosineSimilarity(Dictionary<string, double> vec1, Dictionary<string, double> vec2)
+        {
             var allKeys = vec1.Keys.Union(vec2.Keys);
-            double dot = 0, mag1 = 0, mag2 = 0;
-
-            foreach (var key in allKeys)
-            {
-                double v1 = vec1.ContainsKey(key) ? vec1[key] : 0;
-                double v2 = vec2.ContainsKey(key) ? vec2[key] : 0;
-
-                dot += v1 * v2;
-                mag1 += v1 * v1;
-                mag2 += v2 * v2;
-            }
-
-            return (mag1 == 0 || mag2 == 0) ? 0 : dot / (Math.Sqrt(mag1) * Math.Sqrt(mag2));
+            double dot = allKeys.Sum(k => vec1.GetValueOrDefault(k) * vec2.GetValueOrDefault(k));
+            double mag1 = Math.Sqrt(vec1.Values.Sum(v => v * v));
+            double mag2 = Math.Sqrt(vec2.Values.Sum(v => v * v));
+            return mag1 > 0 && mag2 > 0 ? dot / (mag1 * mag2) : 0.0;
         }
 
-        private Dictionary<string, int> GetVector(string text)
+        private void OutputResults(List<(string ID1, string ID2, double Score)> results)
         {
-            var words = text.ToLower().Split(new[] { ' ', ',', '.', ';', ':', '-', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            var dict = new Dictionary<string, int>();
+            Excel.Worksheet newSheet = Globals.ThisWorkbook.Sheets.Add();
+            newSheet.Name = "Similarity Results";
 
-            foreach (var word in words)
+            newSheet.Cells[1, 1].Value2 = "ID1";
+            newSheet.Cells[1, 2].Value2 = "ID2";
+            newSheet.Cells[1, 3].Value2 = "Similarity";
+
+            int row = 2;
+            foreach (var (id1, id2, score) in results)
             {
-                if (!dict.ContainsKey(word)) dict[word] = 0;
-                dict[word]++;
+                newSheet.Cells[row, 1].Value2 = id1;
+                newSheet.Cells[row, 2].Value2 = id2;
+                newSheet.Cells[row, 3].Value2 = Math.Round(score, 4);
+                row++;
             }
-
-            return dict;
         }
     }
 }
