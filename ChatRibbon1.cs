@@ -29,10 +29,10 @@ namespace Test2
             if (ofd2.ShowDialog() != DialogResult.OK) return;
             string file2 = ofd2.FileName;
 
-            var stories1 = ReadUserStoriesFromExcel(file1);
-            var stories2 = ReadUserStoriesFromExcel(file2);
+            Dictionary<string, string> stories1 = ReadUserStoriesFromExcel(file1);
+            Dictionary<string, string> stories2 = ReadUserStoriesFromExcel(file2);
 
-            var results = CompareUserStories(stories1, stories2);
+            List<SimilarityResult> results = CompareUserStories(stories1, stories2);
             WriteResultsToActiveWorkbook(results);
         }
 
@@ -62,29 +62,41 @@ namespace Test2
             return result;
         }
 
-        private List<(string ID1, string ID2, double Similarity)> CompareUserStories(Dictionary<string, string> set1, Dictionary<string, string> set2)
+        private List<SimilarityResult> CompareUserStories(Dictionary<string, string> set1, Dictionary<string, string> set2)
         {
-            var results = new List<(string, string, double)>();
+            var results = new List<SimilarityResult>();
 
-            foreach (var (id1, desc1) in set1)
+            foreach (KeyValuePair<string, string> pair1 in set1)
             {
-                foreach (var (id2, desc2) in set2)
+                foreach (KeyValuePair<string, string> pair2 in set2)
                 {
-                    double score = CosineSimilarity(desc1, desc2);
-                    results.Add((id1, id2, score));
+                    double score = CosineSimilarity(pair1.Value, pair2.Value);
+                    results.Add(new SimilarityResult
+                    {
+                        ID1 = pair1.Key,
+                        ID2 = pair2.Key,
+                        Score = score
+                    });
                 }
             }
 
-            return results.OrderByDescending(r => r.Similarity).ToList();
+            results.Sort((a, b) => b.Score.CompareTo(a.Score));
+            return results;
         }
 
         private double CosineSimilarity(string text1, string text2)
         {
             var tf1 = GetTermFrequencies(text1);
             var tf2 = GetTermFrequencies(text2);
-            var allTerms = tf1.Keys.Union(tf2.Keys).ToHashSet();
+            var allTerms = new HashSet<string>(tf1.Keys);
+            allTerms.UnionWith(tf2.Keys);
 
-            double dot = allTerms.Sum(term => tf1.GetValueOrDefault(term) * tf2.GetValueOrDefault(term));
+            double dot = 0;
+            foreach (string term in allTerms)
+            {
+                dot += tf1.GetValueOrDefault(term, 0) * tf2.GetValueOrDefault(term, 0);
+            }
+
             double mag1 = Math.Sqrt(tf1.Values.Sum(v => v * v));
             double mag2 = Math.Sqrt(tf2.Values.Sum(v => v * v));
 
@@ -96,8 +108,9 @@ namespace Test2
             var tf = new Dictionary<string, double>();
             string[] words = Regex.Split(text.ToLower(), @"\W+");
 
-            foreach (var word in words.Where(w => !string.IsNullOrWhiteSpace(w)))
+            foreach (string word in words)
             {
+                if (string.IsNullOrWhiteSpace(word)) continue;
                 if (!tf.ContainsKey(word)) tf[word] = 0;
                 tf[word]++;
             }
@@ -105,7 +118,7 @@ namespace Test2
             return tf;
         }
 
-        private void WriteResultsToActiveWorkbook(List<(string ID1, string ID2, double Similarity)> results)
+        private void WriteResultsToActiveWorkbook(List<SimilarityResult> results)
         {
             var excel = Globals.ThisWorkbook.Application;
             Worksheet newSheet = excel.Worksheets.Add();
@@ -116,13 +129,31 @@ namespace Test2
             newSheet.Cells[1, 3].Value = "Similarity";
 
             int row = 2;
-            foreach (var (id1, id2, sim) in results)
+            foreach (SimilarityResult result in results)
             {
-                newSheet.Cells[row, 1].Value = id1;
-                newSheet.Cells[row, 2].Value = id2;
-                newSheet.Cells[row, 3].Value = Math.Round(sim, 4);
+                newSheet.Cells[row, 1].Value = result.ID1;
+                newSheet.Cells[row, 2].Value = result.ID2;
+                newSheet.Cells[row, 3].Value = Math.Round(result.Score, 4);
                 row++;
             }
         }
+
+        private class SimilarityResult
+        {
+            public string ID1 { get; set; }
+            public string ID2 { get; set; }
+            public double Score { get; set; }
+        }
+    }
+
+    // Extension method for GetValueOrDefault in .NET Framework
+    public static class Extensions
+    {
+        public static TValue GetValueOrDefault<TKey, TValue>(this Dictionary<TKey, TValue> dict, TKey key, TValue defaultValue = default(TValue))
+        {
+            TValue value;
+            return dict.TryGetValue(key, out value) ? value : defaultValue;
+        }
     }
 }
+
