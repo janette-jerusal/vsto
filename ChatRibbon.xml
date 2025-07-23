@@ -1,0 +1,11 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="Ribbon_Load">
+  <ribbon>
+    <tabs>
+      <tab id="CustomTab" label="User Story Tools">
+        <group id="Group1" label="Comparison">
+          <button id="CompareButton" label="Compare" onAction="OnComparePressed" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>
