@@ -8,14 +8,12 @@ namespace Test2
     {
         private void ThisWorkbook_Startup(object sender, System.EventArgs e)
         {
-            // No need to return or construct the Ribbon here
         }
 
         private void ThisWorkbook_Shutdown(object sender, System.EventArgs e)
         {
         }
 
-        // Optional: Method to be called by Ribbon1.cs
         public void Compare()
         {
             System.Windows.Forms.MessageBox.Show("Comparison logic triggered.");
