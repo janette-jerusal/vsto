@@ -1,21 +1,15 @@
-using System;
-using Office = Microsoft.Office.Core;
+using Microsoft.Office.Tools.Ribbon;
+using System.Windows.Forms;
 
 namespace Test2
 {
-    public partial class Ribbon1 : Office.IRibbonExtensibility
+    public partial class Ribbon1
     {
-        public Ribbon1() { }
+        private void Ribbon1_Load(object sender, RibbonUIEventArgs e) { }
 
-        public string GetCustomUI(string ribbonID)
-        {
-            return Properties.Resources.Ribbon1;
-        }
-
-        public void OnComparePressed(Office.IRibbonControl control)
+        private void CompareButton_Click(object sender, RibbonControlEventArgs e)
         {
             Globals.ThisWorkbook.Compare();
         }
     }
 }
-
