@@ -1,29 +1,34 @@
 using System;
-using System.Windows.Forms;
+using Microsoft.Office.Tools.Excel;
+using Excel = Microsoft.Office.Interop.Excel;
 
 namespace Test2
 {
     public partial class ThisWorkbook
     {
-        private void ThisWorkbook_Startup(object sender, EventArgs e)
+        private void ThisWorkbook_Startup(object sender, System.EventArgs e)
         {
-            // You can put workbook startup logic here if needed.
+            // No need to return or construct the Ribbon here
         }
 
-        private void ThisWorkbook_Shutdown(object sender, EventArgs e)
+        private void ThisWorkbook_Shutdown(object sender, System.EventArgs e)
         {
-            // Cleanup logic, if needed.
+        }
+
+        // Optional: Method to be called by Ribbon1.cs
+        public void Compare()
+        {
+            System.Windows.Forms.MessageBox.Show("Comparison logic triggered.");
         }
 
         #region VSTO generated code
 
         private void InternalStartup()
         {
-            this.Startup += new EventHandler(ThisWorkbook_Startup);
-            this.Shutdown += new EventHandler(ThisWorkbook_Shutdown);
+            this.Startup += new System.EventHandler(ThisWorkbook_Startup);
+            this.Shutdown += new System.EventHandler(ThisWorkbook_Shutdown);
         }
 
         #endregion
     }
 }
-
