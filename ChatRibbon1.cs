@@ -5,126 +5,122 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Microsoft.Office.Tools.Ribbon;
-using Excel = Microsoft.Office.Interop.Excel;
-using Office = Microsoft.Office.Core;
+using Microsoft.Office.Interop.Excel;
 
 namespace Test2
 {
     public partial class Ribbon1
     {
-        private void Ribbon1_Load(object sender, RibbonUIEventArgs e)
+        private void Ribbon1_Load(object sender, RibbonUIEventArgs e) { }
+
+        private void btnCompare_Click(object sender, RibbonControlEventArgs e)
         {
+            OpenFileDialog ofd1 = new OpenFileDialog();
+            ofd1.Title = "Select first Excel file";
+            ofd1.Filter = "Excel Files|*.xls;*.xlsx";
+
+            if (ofd1.ShowDialog() != DialogResult.OK) return;
+            string file1 = ofd1.FileName;
+
+            OpenFileDialog ofd2 = new OpenFileDialog();
+            ofd2.Title = "Select second Excel file";
+            ofd2.Filter = "Excel Files|*.xls;*.xlsx";
+
+            if (ofd2.ShowDialog() != DialogResult.OK) return;
+            string file2 = ofd2.FileName;
+
+            var stories1 = ReadUserStoriesFromExcel(file1);
+            var stories2 = ReadUserStoriesFromExcel(file2);
+
+            var results = CompareUserStories(stories1, stories2);
+            WriteResultsToActiveWorkbook(results);
         }
 
-        public void OnCompareBtnClick(Office.IRibbonControl control)
+        private Dictionary<string, string> ReadUserStoriesFromExcel(string path)
         {
-            OpenFileDialog dialog = new OpenFileDialog
+            var app = new Microsoft.Office.Interop.Excel.Application();
+            var wb = app.Workbooks.Open(path);
+            var ws = (Worksheet)wb.Sheets[1];
+
+            var result = new Dictionary<string, string>();
+            int row = 2;
+            while (true)
             {
-                Multiselect = true,
-                Filter = "Excel Files|*.xlsx;*.xls"
-            };
+                var idCell = ws.Cells[row, 1]?.Value;
+                var descCell = ws.Cells[row, 2]?.Value;
+                if (idCell == null || descCell == null)
+                    break;
 
-            if (dialog.ShowDialog() == DialogResult.OK && dialog.FileNames.Length == 2)
-            {
-                var file1 = dialog.FileNames[0];
-                var file2 = dialog.FileNames[1];
-
-                var stories1 = ReadStoriesFromExcel(file1);
-                var stories2 = ReadStoriesFromExcel(file2);
-
-                var results = CompareDescriptions(stories1, stories2);
-
-                OutputResults(results);
-            }
-        }
-
-        private Dictionary<string, string> ReadStoriesFromExcel(string path)
-        {
-            var stories = new Dictionary<string, string>();
-
-            var app = new Excel.Application();
-            var workbook = app.Workbooks.Open(path);
-            var sheet = workbook.Sheets[1] as Excel.Worksheet;
-            var range = sheet.UsedRange;
-
-            for (int i = 2; i <= range.Rows.Count; i++)
-            {
-                string id = Convert.ToString((range.Cells[i, 1] as Excel.Range)?.Value2);
-                string desc = Convert.ToString((range.Cells[i, 2] as Excel.Range)?.Value2);
-                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(desc))
-                    stories[id] = desc;
+                string id = idCell.ToString();
+                string description = descCell.ToString();
+                result[id] = description;
+                row++;
             }
 
-            workbook.Close(false);
+            wb.Close(false);
             app.Quit();
-
-            return stories;
+            return result;
         }
 
-        private List<(string ID1, string ID2, double Score)> CompareDescriptions(Dictionary<string, string> stories1, Dictionary<string, string> stories2)
+        private List<(string ID1, string ID2, double Similarity)> CompareUserStories(Dictionary<string, string> set1, Dictionary<string, string> set2)
         {
-            var allDocs = stories1.Values.Concat(stories2.Values).ToList();
-            var tfidfVectors = allDocs.Select(doc => GetTfIdfVector(doc, allDocs)).ToList();
-
-            int split = stories1.Count;
             var results = new List<(string, string, double)>();
 
-            int i = 0;
-            foreach (var kvp1 in stories1)
+            foreach (var (id1, desc1) in set1)
             {
-                int j = split;
-                foreach (var kvp2 in stories2)
+                foreach (var (id2, desc2) in set2)
                 {
-                    double sim = CosineSimilarity(tfidfVectors[i], tfidfVectors[j]);
-                    results.Add((kvp1.Key, kvp2.Key, sim));
-                    j++;
+                    double score = CosineSimilarity(desc1, desc2);
+                    results.Add((id1, id2, score));
                 }
-                i++;
             }
 
-            return results.OrderByDescending(r => r.Score).ToList();
+            return results.OrderByDescending(r => r.Similarity).ToList();
         }
 
-        private Dictionary<string, double> GetTfIdfVector(string doc, List<string> allDocs)
+        private double CosineSimilarity(string text1, string text2)
         {
-            var words = Tokenize(doc);
-            var tf = words.GroupBy(w => w).ToDictionary(g => g.Key, g => (double)g.Count() / words.Count);
-            var idf = words.Distinct().ToDictionary(
-                w => w,
-                w => Math.Log((double)allDocs.Count / allDocs.Count(d => Tokenize(d).Contains(w)))
-            );
-            return tf.ToDictionary(kv => kv.Key, kv => kv.Value * idf[kv.Key]);
+            var tf1 = GetTermFrequencies(text1);
+            var tf2 = GetTermFrequencies(text2);
+            var allTerms = tf1.Keys.Union(tf2.Keys).ToHashSet();
+
+            double dot = allTerms.Sum(term => tf1.GetValueOrDefault(term) * tf2.GetValueOrDefault(term));
+            double mag1 = Math.Sqrt(tf1.Values.Sum(v => v * v));
+            double mag2 = Math.Sqrt(tf2.Values.Sum(v => v * v));
+
+            return (mag1 == 0 || mag2 == 0) ? 0 : dot / (mag1 * mag2);
         }
 
-        private List<string> Tokenize(string text)
+        private Dictionary<string, double> GetTermFrequencies(string text)
         {
-            return Regex.Split(text.ToLower(), @"\W+").Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+            var tf = new Dictionary<string, double>();
+            string[] words = Regex.Split(text.ToLower(), @"\W+");
+
+            foreach (var word in words.Where(w => !string.IsNullOrWhiteSpace(w)))
+            {
+                if (!tf.ContainsKey(word)) tf[word] = 0;
+                tf[word]++;
+            }
+
+            return tf;
         }
 
-        private double CosineSimilarity(Dictionary<string, double> vec1, Dictionary<string, double> vec2)
+        private void WriteResultsToActiveWorkbook(List<(string ID1, string ID2, double Similarity)> results)
         {
-            var allKeys = vec1.Keys.Union(vec2.Keys);
-            double dot = allKeys.Sum(k => vec1.GetValueOrDefault(k) * vec2.GetValueOrDefault(k));
-            double mag1 = Math.Sqrt(vec1.Values.Sum(v => v * v));
-            double mag2 = Math.Sqrt(vec2.Values.Sum(v => v * v));
-            return mag1 > 0 && mag2 > 0 ? dot / (mag1 * mag2) : 0.0;
-        }
-
-        private void OutputResults(List<(string ID1, string ID2, double Score)> results)
-        {
-            Excel.Worksheet newSheet = Globals.ThisWorkbook.Sheets.Add();
+            var excel = Globals.ThisWorkbook.Application;
+            Worksheet newSheet = excel.Worksheets.Add();
             newSheet.Name = "Similarity Results";
 
-            newSheet.Cells[1, 1].Value2 = "ID1";
-            newSheet.Cells[1, 2].Value2 = "ID2";
-            newSheet.Cells[1, 3].Value2 = "Similarity";
+            newSheet.Cells[1, 1].Value = "ID 1";
+            newSheet.Cells[1, 2].Value = "ID 2";
+            newSheet.Cells[1, 3].Value = "Similarity";
 
             int row = 2;
-            foreach (var (id1, id2, score) in results)
+            foreach (var (id1, id2, sim) in results)
             {
-                newSheet.Cells[row, 1].Value2 = id1;
-                newSheet.Cells[row, 2].Value2 = id2;
-                newSheet.Cells[row, 3].Value2 = Math.Round(score, 4);
+                newSheet.Cells[row, 1].Value = id1;
+                newSheet.Cells[row, 2].Value = id2;
+                newSheet.Cells[row, 3].Value = Math.Round(sim, 4);
                 row++;
             }
         }
